@@ -1,11 +1,12 @@
 {
   "name": "last-key",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Survival horror cooperativo para dois jogadores",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "test:performance": "node tests/performance.cjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

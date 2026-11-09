@@ -12,7 +12,7 @@ before(async()=>{
   browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),headless:true,args:['--no-sandbox']});
 });
 after(async()=>{await browser?.close();server?.kill();});
-async function page(){const p=await browser.newPage({viewport:{width:1280,height:800}});p.setDefaultTimeout(12000);p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.goto(url);await p.waitForFunction(()=>Object.keys(sprites).length===10);return p;}
+async function page(){const p=await browser.newPage({viewport:{width:1280,height:800}});p.setDefaultTimeout(12000);p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.goto(url);await p.waitForFunction(()=>Object.keys(sprites).length===13);return p;}
 test('sprites, movement, precision aim, firing and five skills with five levels',async()=>{
  const p=await page();try{
  await p.click('#local');
@@ -83,4 +83,37 @@ test('two browsers synchronize sprites, upgrades, aimed shots and final boss cin
  await a.waitForFunction(()=>!world.cutscene,{},{timeout:12000});await b.waitForFunction(()=>!view.cutscene,{},{timeout:12000});
  assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);
  }finally{await a.close();await b.close();}
+});
+
+test('motion atlases select direction, mirrored walking steps and enemy attack frames',async()=>{
+ const p=await page();try{await p.click('#local');
+ const frames=await p.evaluate(()=>{
+  const calls=[],original=ctx.drawImage;
+  ctx.drawImage=function(img,...args){if(img===sprites.p1Motion||img===sprites.enemyMotion)calls.push({kind:img===sprites.p1Motion?'player':'enemy',sx:args[0],sy:args[1]});return original.call(this,img,...args);};
+  try{
+   const player=world.players[0];player.moving=true;
+   for(const [angle,tick] of [[0,0],[Math.PI/2,8],[-Math.PI/2,16],[Math.PI,24]]){player.a=angle;world.tick=tick;drawPlayer(player,1000);}
+   const r=map.rooms.find(r=>r.tier);const e=makeEnemy(2,r.wx,r.wy,r.id);e.animAttack=.2;drawEnemy(e,1000);
+   return {calls,snapshot:makeSnapshot().enemies[0]};
+  }finally{ctx.drawImage=original;}
+ });
+ assert.deepEqual(frames.calls.slice(0,4).map(c=>[c.sx,c.sy]),[[128,128],[0,0],[256,256],[0,128]]);
+ assert.deepEqual(frames.calls[4],{kind:'enemy',sx:256,sy:128});assert.equal(frames.snapshot.animAttack,.2);assert.equal(frames.snapshot.moving,false);assert.deepEqual(p.errors,[]);
+ }finally{await p.close();}
+});
+test('room transitions reuse tile cache; clearance masks match collisions and path searches are budgeted',async()=>{
+ const p=await page();try{await p.click('#local');
+ const result=await p.evaluate(()=>{
+  const layer=tileLayer;for(const room of map.rooms){world.players[0].x=room.wx;world.players[0].y=room.wy;render(world,1000);if(tileLayer!==layer)return {error:'cache rebuilt on room entry'};}
+  for(const radius of [13,15,24,28,31,36]){const mask=navigationMask(radius);for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+    const expected=!wallAt(x,y)&&!blocked((x+.5)*T,(y+.5)*T,radius,true);if(Boolean(mask[y*COLS+x])!==expected)return {error:'clearance mismatch'};
+  }}
+  const room=map.rooms.find(r=>r.type==='normal');for(const player of world.players){player.x=room.wx;player.y=room.wy;}
+  world.enemies=[];for(let i=0;i<16;i++)makeEnemy(1,room.wx+100,room.wy+40,room.id);
+  const originalRoute=straightRoute,originalPath=findPath;let calls=0;
+  try{straightRoute=()=>false;findPath=(...args)=>{calls++;return originalPath(...args);};updateEnemies();return {calls,error:null};}
+  finally{straightRoute=originalRoute;findPath=originalPath;}
+ });
+ assert.equal(result.error,null);assert.equal(result.calls,2);assert.deepEqual(p.errors,[]);
+ }finally{await p.close();}
 });

@@ -1,4 +1,4 @@
-# Last Key — Arte integrada (1.1.0)
+# Last Key — Arte e movimento (1.1.1)
 
 Jogo de sobrevivência para dois jogadores, no mesmo computador ou online.
 
@@ -27,9 +27,10 @@ informa seu código. Não precisam estar na mesma rede.
   Shift direito para mira de precisão, U para recarregar, O para interação.
 - Gamepad P2: analógicos, RT tiro, LT mira, X recarga, A interação.
 
-Os sete PNGs fornecidos ficam em `public/sprites/`. São imagens estáticas:
-passos alternados, balanço, recuo, movimento de recarga e rotação das armas são
-animados no Canvas. Os corpos permanecem em pé; as armas acompanham a mira.
+Os sete PNGs fornecidos ficam em `public/sprites/`. Os três atlas adicionais de 384×384 contêm células de 128×128: jogadores com
+frente/perfil/costas e sequência de passos 2–1–3–1; inimigos com dois passos e
+pose de ataque. As poses acompanham os ticks da simulação, inclusive online.
+Balanço, recuo, recarga e rotação das armas continuam animados no Canvas. Os corpos permanecem em pé; as armas acompanham a mira.
 A mira reduz a velocidade, estreita o leque de projéteis extras e contrai o retículo.
 
 ## Habilidades
@@ -79,3 +80,21 @@ As capturas ficam em `test-results/` (ignoradas no Git).
 
 `last-key.zip` é o pacote original, preservado como recebido; para a versão
 atualizada, use os arquivos da raiz deste repositório.
+
+## Desempenho e transições de sala
+
+A arte estática do mapa é desenhada uma vez, no início da operação, em um
+Canvas reutilizado por ambos os visores. Só a região visível é copiada a cada
+quadro; elementos distantes não são desenhados. A superfície ocupa cerca de
+42 MiB e é liberada ao voltar ao menu. Não há criação de cache ao entrar em salas.
+
+A navegação pré-calcula colisões para os seis tamanhos de inimigos e reutiliza
+os arrays das buscas. A IA executa no máximo duas buscas A* por passo, mantendo
+as rotas existentes enquanto os outros inimigos aguardam sua vez.
+
+`npm run test:performance` mede 100 desenhos em tela dividida com mudanças de
+sala e 100 buscas de rota, com seed fixa 112358. Ele mede tempo de CPU das
+funções, não FPS completo, latência de rede ou desempenho em todos os aparelhos.
+Para comparar uma versão anterior, exporte seu HTML e use
+`BASELINE_HTML=/caminho/index.html npm run test:performance`.
+Consulte `docs/performance-1.1.1.json` para a medição local antes/depois.

@@ -120,6 +120,7 @@ const $ = id => document.getElementById(id);
 const ASSETS = {
   p1:'sprites/p1.png', p2:'sprites/p2.png', slow:'sprites/slow.png', fast:'sprites/fast.png', tank:'sprites/tank.png',
   pistol:'sprites/pistol.png', cannon:'sprites/cannon.png',
+  p1Motion:'sprites/p1-motion.png',p2Motion:'sprites/p2-motion.png',enemyMotion:'sprites/enemy-motion.png',
   boss1:'sprites/slow.png', boss2:'sprites/fast.png', boss3:'sprites/tank.png',
   floor:'', wall:'', key:'', ammo:'', exit:''
 };
@@ -127,7 +128,10 @@ const sprites = {};
 for (const [name, url] of Object.entries(ASSETS)) {
   if (!url) continue;
   const img = new Image();
-  img.onload = () => { sprites[name] = img; };
+  img.onload = async () => {
+    try { await img.decode(); } catch {}
+    sprites[name] = img;
+  };
   img.src = url;
 }
 const canvas = $('screen');
@@ -641,7 +645,7 @@ function makeEnemy(type,x,y,room,{ boss = false, carrier = false, summoned = fal
   const entity = {
     id:world.nextId++,type,x,y,a:0,room,hp,maxHp:hp,
     r:boss ? [0,31,28,36][type] : info.r, boss,carrier,summoned,
-    enemy:true,attack:.25,skill:boss ? 1.6 : .9 + world.random(),dash:0,tell:0,
+    enemy:true,animAttack:0,moving:false,attack:.25,skill:boss ? 1.6 : .9 + world.random(),dash:0,tell:0,
     dashAngle:0,path:[],plan:0,aware:0,target:-1,active:false
   };
   world.enemies.push(entity);
@@ -827,10 +831,24 @@ function updatePlayers(inputs) {
 }
 
 // ai
+let navigationMap = null;
+const navigationMasks = new Map();
+const searchCosts = new Float32Array(COLS*ROWS);
+const searchParents = new Int16Array(COLS*ROWS);
+function navigationMask(radius) {
+  if(navigationMap!==map) { navigationMap=map; navigationMasks.clear(); }
+  if(navigationMasks.has(radius)) return navigationMasks.get(radius);
+  const mask=new Uint8Array(COLS*ROWS);
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) {
+    if(!wallAt(x,y) && !blocked((x+.5)*T,(y+.5)*T,radius,true)) mask[y*COLS+x]=1;
+  }
+  navigationMasks.set(radius,mask);return mask;
+}
 function findPath(e,target) {
   const start = cellAt(e.x,e.y);
   const gx = Math.floor(target.x/T), gy = Math.floor(target.y/T);
-  const passable = (x,y) => !wallAt(x,y) && !blocked((x+.5)*T,(y+.5)*T,e.r,true);
+  const mask=navigationMask(e.r);
+  const passable = (x,y) => x>=0 && y>=0 && x<COLS && y<ROWS && mask[y*COLS+x];
   let goal = -1, closest = Infinity;
   for (let y = gy-2; y <= gy+2; y++) {
     for (let x = gx-2; x <= gx+2; x++) {
@@ -840,8 +858,8 @@ function findPath(e,target) {
     }
   }
   if (start < 0 || goal < 0 || start === goal) return [];
-  const costs = new Float32Array(COLS*ROWS).fill(Infinity);
-  const parents = new Int16Array(COLS*ROWS).fill(-1);
+  const costs = searchCosts.fill(Infinity);
+  const parents = searchParents.fill(-1);
   const queue = [];
   const goalX = goal%COLS, goalY = Math.floor(goal/COLS);
   const heuristic = (x,y) => Math.abs(goalX-x)+Math.abs(goalY-y);
@@ -909,6 +927,7 @@ function enemyBullet(e,a) {
   });
 }
 function triggerSkill(e,target) {
+  e.animAttack = .35;
   const angle = Math.atan2(target.y-e.y,target.x-e.x);
   e.dashAngle = angle;
   if (e.boss && e.type === 2) {
@@ -934,8 +953,12 @@ function triggerSkill(e,target) {
   if (e.boss) effect({ kind:'growl',x:e.x,y:e.y });
 }
 function updateEnemies() {
+  // At most two A* searches per simulation step; queued enemies retain their path.
+  let pathBudget = 2;
   const activePlayers = world.players.filter(p => !p.down && roomAt(p.x,p.y)?.type !== 'bench');
   for (const e of [...world.enemies]) {
+    e.moving = false;
+    e.animAttack = Math.max(0,e.animAttack-STEP);
     e.attack = Math.max(0,e.attack-STEP);
     e.skill = Math.max(0,e.skill-STEP);
     let target = null, nearest = Infinity;
@@ -958,6 +981,7 @@ function updateEnemies() {
     if (nearest < e.r+target.r+5 && !e.attack && visible(e,target,true)) {
       const damage = ENEMY_TYPES[e.type].damage + (e.boss ? 9 : 0) + (e.dash ? 4 : 0);
       hurtPlayer(target,damage,e.x,e.y);
+      e.animAttack = .25;
       e.attack = e.boss ? .83 : .88;
     }
     if (e.tell > 0) {
@@ -971,6 +995,7 @@ function updateEnemies() {
       e.a = e.dashAngle;
       const x = e.x, y = e.y;
       slide(e,Math.cos(e.a)*speed*STEP,Math.sin(e.a)*speed*STEP);
+      e.moving = Math.hypot(e.x-x,e.y-y) > .1;
       e.dash = Math.hypot(e.x-x,e.y-y) > 1 ? Math.max(0,e.dash-STEP) : 0;
       continue;
     }
@@ -982,7 +1007,8 @@ function updateEnemies() {
     let destination = target;
     if (!straight) {
       e.plan -= STEP;
-      if (e.plan <= 0 || e.target !== target.id) {
+      if ((e.plan <= 0 || e.target !== target.id) && pathBudget > 0) {
+        pathBudget--;
         e.plan = .32 + (e.id%7)*.025;
         e.target = target.id;
         e.path = findPath(e,target);
@@ -995,7 +1021,9 @@ function updateEnemies() {
     const angle = Math.atan2(destination.y-e.y,destination.x-e.x);
     e.a = turn(e.a,angle,.22);
     const step = ENEMY_TYPES[e.type].speed * (e.boss ? .87 : 1) * STEP;
+    const oldX=e.x,oldY=e.y;
     slide(e,Math.cos(angle)*step,Math.sin(angle)*step);
+    e.moving = Math.hypot(e.x-oldX,e.y-oldY) > .1;
   }
 }
 
@@ -1139,6 +1167,7 @@ function goMenu(notice = '') {
   disconnect();
   mode = 'menu';
   map = world = view = null;
+  tileLayer = tileMap = navigationMap = null; navigationMasks.clear();
   snapshots = [];
   closeBench();
   clearInput();
@@ -1347,61 +1376,88 @@ function sprite(g,name,x,y,w,h) {
   g.drawImage(sprites[name],x,y,w,h);
   return true;
 }
+function motionSprite(name,row,column,x,y,w,h) {
+  const img=sprites[name];
+  if(!img) return false;
+  ctx.drawImage(img,column*128,row*128,128,128,x,y,w,h);
+  return true;
+}
 function tileHash(x,y) {
   return (Math.imul(x+137,374761393) ^ Math.imul(y+191,668265263)) >>> 0;
 }
 const FLOOR_PALETTE = ['#3b4643','#414d48','#35413e','#46504a','#3d4945'];
+let tileLayer = null, tileMap = null;
+function prepareStage() {
+  for(const radius of [13,15,24,28,31,36]) navigationMask(radius);
+  tileLayer=document.createElement('canvas');
+  tileLayer.width=COLS*T;tileLayer.height=ROWS*T;
+  const g=tileLayer.getContext('2d');
+  paintTiles(g,0,COLS-1,0,ROWS-1);
+  tileMap=map;
+}
 function drawTiles(cam) {
-  const minX = Math.max(0,Math.floor((cam.x-cam.w/2/cam.zoom)/T)-1);
-  const maxX = Math.min(COLS-1,Math.ceil((cam.x+cam.w/2/cam.zoom)/T)+1);
-  const minY = Math.max(0,Math.floor((cam.y-cam.h/2/cam.zoom)/T)-1);
-  const maxY = Math.min(ROWS-1,Math.ceil((cam.y+cam.h/2/cam.zoom)/T)+1);
+  if(tileMap!==map || !tileLayer) prepareStage();
+  const x=Math.max(0,Math.floor(cam.x-cam.w/2/cam.zoom)-T);
+  const y=Math.max(0,Math.floor(cam.y-cam.h/2/cam.zoom)-T);
+  const right=Math.min(COLS*T,Math.ceil(cam.x+cam.w/2/cam.zoom)+T);
+  const bottom=Math.min(ROWS*T,Math.ceil(cam.y+cam.h/2/cam.zoom)+T);
+  if(right>x && bottom>y) ctx.drawImage(tileLayer,x,y,right-x,bottom-y,x,y,right-x,bottom-y);
+}
+function onCamera(entity,cam,padding=80) {
+  return Math.abs(entity.x-cam.x)<cam.w/2/cam.zoom+padding &&
+    Math.abs(entity.y-cam.y)<cam.h/2/cam.zoom+padding;
+}
+function roomOnCamera(room,cam) {
+  return Math.abs(room.wx-cam.x)<cam.w/2/cam.zoom+room.w*T/2+T &&
+    Math.abs(room.wy-cam.y)<cam.h/2/cam.zoom+room.h*T/2+T;
+}
+function paintTiles(g,minX,maxX,minY,maxY) {
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
       const x0 = x*T, y0 = y*T, v = tileHash(x,y);
       if (!wallAt(x,y)) {
-        if (sprite(ctx,'floor',x0,y0,T,T)) continue;
+        if (sprite(g,'floor',x0,y0,T,T)) continue;
         const room = map.rooms[map.zone[y*COLS+x]];
-        ctx.fillStyle = room?.type === 'foundry' ? ['#504538','#594a38','#483f35'][v%3] :
+        g.fillStyle = room?.type === 'foundry' ? ['#504538','#594a38','#483f35'][v%3] :
           room?.type === 'garden' ? ['#384837','#42533a','#3d4c32'][v%3] : room ? FLOOR_PALETTE[v%5] : v%2 ? '#333f3d' : '#3b4742';
-        ctx.fillRect(x0,y0,T,T);
-        ctx.strokeStyle = '#111b1bd0'; ctx.lineWidth = 2; ctx.strokeRect(x0+1,y0+1,T-2,T-2);
-        ctx.fillStyle = '#96a18a33'; ctx.fillRect(x0+3,y0+3,T-6,2);
+        g.fillRect(x0,y0,T,T);
+        g.strokeStyle = '#111b1bd0'; g.lineWidth = 2; g.strokeRect(x0+1,y0+1,T-2,T-2);
+        g.fillStyle = '#96a18a33'; g.fillRect(x0+3,y0+3,T-6,2);
         if (room?.type === 'foundry' && v%7 === 0) {
-          ctx.fillStyle='#211b16'; ctx.fillRect(x0+8,y0+8,28,28);
-          ctx.fillStyle='#f6b965'; for(let k=0;k<4;k++) ctx.fillRect(x0+10+k*6,y0+10,2,24);
+          g.fillStyle='#211b16'; g.fillRect(x0+8,y0+8,28,28);
+          g.fillStyle='#f6b965'; for(let k=0;k<4;k++) g.fillRect(x0+10+k*6,y0+10,2,24);
         }
         if (room?.type === 'garden' && v%4 === 0) {
-          ellipse(ctx,x0+22,y0+24,15,10,'#192c24');
-          ellipse(ctx,x0+20,y0+21,12,8,'#708d46');
-          ellipse(ctx,x0+25,y0+18,5,4,'#c2cf73');
+          ellipse(g,x0+22,y0+24,15,10,'#192c24');
+          ellipse(g,x0+20,y0+21,12,8,'#708d46');
+          ellipse(g,x0+25,y0+18,5,4,'#c2cf73');
         }
-        ctx.fillStyle = '#0a131225';
-        ctx.fillRect(x0+T-1,y0,1,T);
-        ctx.fillRect(x0,y0+T-1,T,1);
-        ctx.fillStyle = '#8fbca11c';
-        ctx.fillRect(x0+4+v%20,y0+5+(v>>>8)%22,3+v%10,1);
+        g.fillStyle = '#0a131225';
+        g.fillRect(x0+T-1,y0,1,T);
+        g.fillRect(x0,y0+T-1,T,1);
+        g.fillStyle = '#8fbca11c';
+        g.fillRect(x0+4+v%20,y0+5+(v>>>8)%22,3+v%10,1);
         if (v%13 === 0) {
-          ctx.fillStyle = '#06090942';
-          ctx.fillRect(x0+9,y0+15,23,12);
-          ctx.fillStyle = '#697e6f66';
-          for (let i = 0; i < 5; i++) ctx.fillRect(x0+11+i*4,y0+16,1,10);
+          g.fillStyle = '#06090942';
+          g.fillRect(x0+9,y0+15,23,12);
+          g.fillStyle = '#697e6f66';
+          for (let i = 0; i < 5; i++) g.fillRect(x0+11+i*4,y0+16,1,10);
         }
         continue;
       }
       const edge = !wallAt(x+1,y) || !wallAt(x-1,y) || !wallAt(x,y+1) || !wallAt(x,y-1);
       if (!edge) continue;
-      if (sprite(ctx,'wall',x0,y0,T,T)) continue;
-      ctx.fillStyle = v%2 ? '#333c38' : '#2b3431';
-      ctx.fillRect(x0,y0,T,T);
-      ctx.strokeStyle='#111a18'; ctx.lineWidth=3; ctx.strokeRect(x0+1,y0+1,T-2,T-2);
-      ctx.fillStyle = '#7b8063';
-      if (!wallAt(x,y+1)) ctx.fillRect(x0,y0+T-7,T,7);
-      if (!wallAt(x,y-1)) ctx.fillRect(x0,y0,T,4);
-      if (!wallAt(x+1,y)) ctx.fillRect(x0+T-4,y0,4,T);
-      if (!wallAt(x-1,y)) ctx.fillRect(x0,y0,4,T);
-      ctx.fillStyle = '#101919';
-      ctx.fillRect(x0+10,y0+17,T-20,5);
+      if (sprite(g,'wall',x0,y0,T,T)) continue;
+      g.fillStyle = v%2 ? '#333c38' : '#2b3431';
+      g.fillRect(x0,y0,T,T);
+      g.strokeStyle='#111a18'; g.lineWidth=3; g.strokeRect(x0+1,y0+1,T-2,T-2);
+      g.fillStyle = '#7b8063';
+      if (!wallAt(x,y+1)) g.fillRect(x0,y0+T-7,T,7);
+      if (!wallAt(x,y-1)) g.fillRect(x0,y0,T,4);
+      if (!wallAt(x+1,y)) g.fillRect(x0+T-4,y0,4,T);
+      if (!wallAt(x-1,y)) g.fillRect(x0,y0,4,T);
+      g.fillStyle = '#101919';
+      g.fillRect(x0+10,y0+17,T-20,5);
     }
   }
 }
@@ -1487,14 +1543,17 @@ function drawPlayer(p,now) {
   const stride = p.moving ? Math.sin(now/75+p.id)*3 : 0;
   const bob = p.down ? 0 : p.moving ? Math.abs(stride)*.55 : Math.sin(now/350)*.65;
   const recoil = p.kick || 0;
+  const tick = (world || view)?.tick || 0;
+  const horizontal = Math.abs(Math.cos(p.a)) >= Math.abs(Math.sin(p.a));
+  const row = horizontal ? 1 : Math.sin(p.a) > 0 ? 0 : 2;
+  const column = p.moving && !p.down ? [1,0,2,0][Math.floor(tick/8)%4] : 0;
   ctx.save();
   if (p.down) ctx.rotate(-Math.PI/2);
   ctx.translate(-Math.cos(p.a)*recoil*2,-bob);
   ctx.rotate(p.moving ? stride*.012 : 0);
-  // Separate boots provide alternating steps under the static painted sprite.
-  ellipse(ctx,-9,16+stride,6,4,'#171d1b');
-  ellipse(ctx,9,16-stride,6,4,'#171d1b');
-  sprite(ctx,p.id ? 'p2' : 'p1',-29,-37,58,58);
+  if (horizontal && Math.cos(p.a)<0) ctx.scale(-1,1);
+  if (!motionSprite(p.id ? 'p2Motion' : 'p1Motion',row,column,-29,-37,58,58))
+    sprite(ctx,p.id ? 'p2' : 'p1',-29,-37,58,58);
   ctx.restore();
   if (!p.down) {
     ctx.save();
@@ -1545,7 +1604,11 @@ function drawEnemy(e,now) {
   ctx.rotate(flex*.035);
   ellipse(ctx,-r*.4,r*.65+flex*2,r*.28,r*.16,'#141c17');
   ellipse(ctx,r*.4,r*.65-flex*2,r*.28,r*.16,'#141c17');
-  if (!sprite(ctx,e.boss ? 'boss'+e.type : ENEMY_TYPES[e.type].sprite,-r*1.5,-r*1.8,r*3,r*3)) {
+  const tick=(world || view)?.tick || 0;
+  const column=e.animAttack > 0 || e.tell > 0 ? 2 : e.moving ? Math.floor(tick/(e.type===2 ? 6 : 10)+e.id)%2 : 0;
+  if (Math.cos(e.a)<0) ctx.scale(-1,1);
+  if (!motionSprite('enemyMotion',e.type-1,column,-r*1.5,-r*1.8,r*3,r*3) &&
+      !sprite(ctx,e.boss ? 'boss'+e.type : ENEMY_TYPES[e.type].sprite,-r*1.5,-r*1.8,r*3,r*3)) {
     if (e.type === 1) {
       ellipse(ctx,-r*.32,0,r*.78,r*.48,'#5c6663');
       ellipse(ctx,-r*.09,-r*.42,r*.8,r*.19,'#79847c');
@@ -1662,7 +1725,7 @@ function darken(cam,data,offsetX,offsetY) {
   g.scale(cam.zoom,cam.zoom);
   g.translate(-cam.x,-cam.y);
   for (const room of map.rooms) {
-    if (!data.rooms[room.id].seen) continue;
+    if (!data.rooms[room.id].seen || !roomOnCamera(room,cam)) continue;
     g.clearRect(room.x*T,room.y*T,room.w*T,room.h*T);
     g.fillStyle = room.type === 'bench' ? '#06120a71' : '#0308098a';
     g.fillRect(room.x*T,room.y*T,room.w*T,room.h*T);
@@ -1676,10 +1739,10 @@ function darken(cam,data,offsetX,offsetY) {
   g.restore();
   ctx.drawImage(mask,0,0,cam.w*density,cam.h*density,cam.left,0,cam.w,cam.h);
 }
-function drawBullets(data) {
+function drawBullets(data,cam) {
   ctx.lineCap = 'round';
   for (const b of data.bullets) {
-    if (!isLit(b,data)) continue;
+    if (!onCamera(b,cam) || !isLit(b,data)) continue;
     ctx.strokeStyle = b.style === 'toxic' ? '#bbf47f' : b.style === 'cannon' ? '#ffbb6f' : b.critical ? '#fff3a3' : '#fff1be';
     ctx.lineWidth = b.style === 'cannon' ? 5 : b.style === 'toxic' ? 4 : 2;
     ctx.beginPath();
@@ -1688,9 +1751,9 @@ function drawBullets(data) {
     ctx.stroke();
   }
 }
-function drawSparks(data,now) {
+function drawSparks(data,now,cam) {
   for (const s of sparks) {
-    if (!isLit(s,data)) continue;
+    if (!onCamera(s,cam) || !isLit(s,data)) continue;
     const age = (now-s.at)/s.life;
     ctx.globalAlpha = 1-age;
     if (s.kind === 'shot') {
@@ -1747,16 +1810,16 @@ function drawView(cam,data,now) {
   ctx.translate(-cam.x,-cam.y);
   drawTiles(cam);
   for (const room of map.rooms) {
-    if (data.rooms[room.id].seen) drawRoomProps(room,data);
+    if (data.rooms[room.id].seen && roomOnCamera(room,cam)) drawRoomProps(room,data);
   }
   for (const item of data.drops) {
-    if (isLit(item,data) || (item.type === 'key' && visible(p,item))) drawDrop(item,now);
+    if (onCamera(item,cam) && (isLit(item,data) || (item.type === 'key' && visible(p,item)))) drawDrop(item,now);
   }
   for (const e of data.enemies) {
-    if (isLit(e,data)) drawEnemy(e,now);
+    if (onCamera(e,cam,e.r*2+25) && isLit(e,data)) drawEnemy(e,now);
   }
-  drawBullets(data);
-  drawSparks(data,now);
+  drawBullets(data,cam);
+  drawSparks(data,now,cam);
   for (const player of data.players) {
     if (player.id === p.id || visible(p,player)) drawPlayer(player,now);
   }
@@ -1991,8 +2054,8 @@ function makeSnapshot() {
     rooms:world.rooms.map(({ seen,wave,cleared }) => ({ seen,wave,cleared })),
     players:world.players.map(({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r,focus,kick }) =>
       ({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r,focus,kick })),
-    enemies:world.enemies.map(({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active }) =>
-      ({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active })),
+    enemies:world.enemies.map(({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active,moving,animAttack }) =>
+      ({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active,moving,animAttack })),
     bullets:world.bullets.map(({ id,x,y,a,style,critical }) => ({ id,x,y,a,style,critical })),
     drops:world.drops
   };
@@ -2024,6 +2087,7 @@ function interpolate(now) {
 function begin(seed,roundNumber,authority) {
   round = roundNumber;
   map = makeMap(seed);
+  prepareStage();
   world = authority ? createWorld(seed) : null;
   view = null;
   snapshots = [];

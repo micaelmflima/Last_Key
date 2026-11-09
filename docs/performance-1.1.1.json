@@ -1,0 +1,33 @@
+{
+  "scenario": "100 render calls with room transitions and 100 pathfinding calls; seed 112358; Chromium headless, 1280x800; CPU timings in milliseconds",
+  "baseline_commit": "c1150c35a061eee0a9467fcfc66add18fd764e1d",
+  "before": {
+    "render": {
+      "median": 7.400000002235174,
+      "p95": 27,
+      "max": 37.19999999925494,
+      "total": 1112.3999999985099
+    },
+    "pathfinding": {
+      "median": 0.19999999925494194,
+      "p95": 1.0999999977648258,
+      "max": 1.699999999254942,
+      "total": 28.50000000372529
+    }
+  },
+  "after": {
+    "render": {
+      "median": 6.300000000745058,
+      "p95": 8.699999999254942,
+      "max": 31.899999998509884,
+      "total": 680.9999999925494
+    },
+    "pathfinding": {
+      "median": 0.10000000149011612,
+      "p95": 0.7000000029802322,
+      "max": 1.4000000022351742,
+      "total": 21.50000000372529
+    }
+  },
+  "limitations": "Single local run; CPU timings do not measure complete frame presentation, Internet latency, Render performance or all hardware."
+}
