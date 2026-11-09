@@ -25,6 +25,18 @@ label{display:grid;gap:5px;min-width:0;font-size:10px;font-weight:800;color:#b6c
 #pauseStats{color:var(--gold);margin:10px 0;font-size:13px}
 @media(max-height:550px){#overlay{align-items:flex-start;padding:12px}.frame{padding:16px}h1{font-size:64px}.summary{margin:7px 0 10px}.fields{margin:8px 0}.note{margin-top:7px}#radarWrap{top:64px}#radar{width:94px;height:64px}.cards{bottom:6px;left:6px;right:6px}.hint{bottom:69px}}
 @media(max-width:550px){#radarWrap{top:78px;right:5px}#radar{width:84px;height:62px}.cards{left:5px;right:5px}.card{padding:6px;max-width:47%}.chip{font-size:9px}}
+.cinematic #hud{visibility:hidden}
+#bench{max-height:86vh;overflow-y:auto;width:min(440px,94vw)}
+#bench .skill{text-align:left;padding:8px;background:#111e1b;border-color:#3b4c40;display:grid;gap:6px}
+#bench .skill.installed{border-color:#a7b969;background:#1c2c23}
+#bench .skill strong{font-size:11px;color:#e4d9b5}
+#bench .skill small{font-size:10px;line-height:1.4;color:#acbda5}
+.skill-meter{display:flex;gap:4px}.skill-meter i{height:5px;flex:1;background:#34423a}.skill-meter i.filled{background:#dcc173}
+#bench .skill:disabled{opacity:.55}
+.loadout{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:8px}
+.loadout-slot{border:1px solid #4d5b42;background:#1c2921;min-width:0;padding:4px 2px;text-align:center;color:#d3c69a;font-size:9px}
+.loadout-slot.empty{color:#718073;border-style:dashed;background:transparent}
+.loadout-slot .skill-meter{gap:2px;margin-top:4px}.loadout-slot .skill-meter i{height:3px}
 </style>
 </head>
 <body>
@@ -43,14 +55,14 @@ label{display:grid;gap:5px;min-width:0;font-size:10px;font-weight:800;color:#b6c
     <div class="eyebrow mono"><i class="dot"></i> Complexo 07 / protocolo de evacuação</div>
     <h1 id="title">LAST <span>KEY</span></h1>
     <div class="kicker mono">Survival horror cooperativo · 2 operadores</div>
-    <p class="summary">A energia caiu. A saída está lacrada. Encontrem o portador da chave e cheguem juntos à superfície.</p>
+    <p class="summary">A energia caiu. A saída está lacrada. Atravessem a Fundição e o Jardim Biológico, derrotem os três chefes e levem a chave à superfície.</p>
     <div class="fields">
       <label>Seed manual <input id="seedInput" maxlength="40" placeholder="Aleatória se vazio" autocomplete="off"></label>
       <label>Código do parceiro <input id="roomInput" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false"></label>
     </div>
     <div class="actions"><button class="primary wide" id="local">Jogar local · tela dividida</button><button id="create">Criar sala online</button><button id="join">Entrar em uma sala</button></div>
     <div id="menuNotice" class="notice" role="status"></div>
-    <p class="note">P1 · WASD, mouse, clique, R e E. P2 local · setas, IJKL (mira) ou H/M (giro livre), Espaço, U e O. No gamepad, use os analógicos, RT, X e A. Online, ambos usam WASD e mouse.</p>
+    <p class="note">P1 · WASD, mouse, clique para atirar, botão direito para mirar, R e E. P2 local · setas, IJKL (mira) ou H/M (giro livre), Espaço, Shift direito (mira), U e O. No gamepad, use os analógicos, RT (tiro), LT (mira), X e A. Online, ambos usam WASD e mouse.</p>
   </section>
   <section id="lobby" class="frame" hidden>
     <div class="eyebrow mono"><i class="dot"></i> Canal cooperativo</div>
@@ -80,20 +92,23 @@ label{display:grid;gap:5px;min-width:0;font-size:10px;font-weight:800;color:#b6c
 // config
 const T = 44;
 const COLS = 84;
-const ROWS = 51;
+const ROWS = 67;
 const STEP = 1 / 60;
 const SNAP_INTERVAL = 3; // 20 snapshots por segundo
 const TAU = Math.PI * 2;
 const ROOM_NAMES = {
   start:'Ponto de despertar', normal:'Setor de contenção', ammo:'Depósito de munição',
-  boss:'Câmara de contenção', key:'Cofre biológico', bench:'Sala segura', exit:'Saída de emergência'
+  boss:'Câmara de contenção', key:'Cofre biológico', bench:'Sala segura', exit:'Saída de emergência', foundry:'Fundição de Âmbar', garden:'Jardim Biológico'
 };
 const ROOM_COLORS = {
   start:'#89b8b0', normal:'#6d8a83', ammo:'#e3af66', boss:'#e77869',
-  key:'#fbd274', bench:'#b5e67c', exit:'#62d5c4'
+  key:'#fbd274', bench:'#b5e67c', exit:'#62d5c4', foundry:'#eab76b', garden:'#b6cc78'
 };
 const BOSSES = ['A Massa', 'O Vigia', 'O Colosso'];
-const PLAYER_COLORS = ['#69d9ff', '#ff7669'];
+const PLAYER_COLORS = ['#69c5c9', '#efbc58'];
+const MAX_SKILLS = 5, MAX_UPGRADE = 5;
+const usedSkills = p => p.mods.filter(n => n > 0).length;
+const phaseCleared = data => map.rooms.filter(r => ['foundry','garden'].includes(r.type)).every(r => data.rooms[r.id].cleared);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const turn = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
@@ -103,7 +118,9 @@ const $ = id => document.getElementById(id);
 // assets — coloque as imagens em public/sprites e use URLs como "sprites/p1.png".
 // A arte das entidades deve apontar para a direita na posição original (ângulo zero).
 const ASSETS = {
-  p1:'', p2:'', slow:'', fast:'', tank:'', boss1:'', boss2:'', boss3:'',
+  p1:'sprites/p1.png', p2:'sprites/p2.png', slow:'sprites/slow.png', fast:'sprites/fast.png', tank:'sprites/tank.png',
+  pistol:'sprites/pistol.png', cannon:'sprites/cannon.png',
+  boss1:'sprites/slow.png', boss2:'sprites/fast.png', boss3:'sprites/tank.png',
   floor:'', wall:'', key:'', ammo:'', exit:''
 };
 const sprites = {};
@@ -127,7 +144,7 @@ let flash = [], sparks = [], toast = '', toastUntil = 0;
 
 // input
 const keys = new Set();
-const pointer = { x:0, y:0, active:false, fire:false };
+const pointer = { x:0, y:0, active:false, fire:false, focus:false };
 const aim = [0, 0];
 const pendingUpgrade = [null, null];
 const controls = [
@@ -137,7 +154,7 @@ const controls = [
 
 function clearInput() {
   keys.clear();
-  pointer.fire = false;
+  pointer.fire = pointer.focus = false;
   pendingUpgrade.fill(null);
   remoteInput = null;
   guestUseHeld = false;
@@ -160,23 +177,25 @@ canvas.addEventListener('pointermove', event => {
   pointer.y = event.clientY;
   pointer.active = true;
 });
-canvas.addEventListener('pointerdown', event => {
+// Mouse events handle button chords (right aim + left fire) independently.
+canvas.addEventListener('mousedown', event => {
   unlockAudio();
+  if (event.button === 2) { pointer.focus = true; return; }
   if (event.button !== 0) return;
   pointer.x = event.clientX;
   pointer.y = event.clientY;
   pointer.active = true;
   pointer.fire = true;
 });
-window.addEventListener('pointerup', () => { pointer.fire = false; });
-window.addEventListener('pointercancel', () => { pointer.fire = false; });
+window.addEventListener('mouseup', event => { if (event.button === 2) pointer.focus = false; else pointer.fire = false; });
+window.addEventListener('pointercancel', clearInput);
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 
 function axis(negative, positive) {
   return Number(keys.has(positive)) - Number(keys.has(negative));
 }
 function emptyInput(a = 0) {
-  return { x:0, y:0, a, fire:false, reload:false, use:false, upgrade:null };
+  return { x:0, y:0, a, fire:false, focus:false, reload:false, use:false, upgrade:null };
 }
 function readInput(slot) {
   const input = emptyInput(aim[slot]);
@@ -193,11 +212,13 @@ function readInput(slot) {
     if (x || y) input.a = Math.atan2(y, x);
     else input.a = (input.a + axis('KeyH','KeyM')*2.8*STEP) % TAU;
     input.fire = keys.has('Space');
+    input.focus = keys.has('ShiftRight');
     if (pad) {
       const [lx = 0, ly = 0, rx = 0, ry = 0] = pad.axes;
       if (Math.hypot(lx,ly) > .23) { input.x = lx; input.y = ly; }
       if (Math.hypot(rx,ry) > .23) input.a = Math.atan2(ry,rx);
       input.fire ||= Boolean(pad.buttons[7]?.pressed || pad.buttons[5]?.pressed);
+      input.focus ||= Boolean(pad.buttons[6]?.pressed);
       input.use ||= Boolean(pad.buttons[0]?.pressed);
       input.reload ||= Boolean(pad.buttons[2]?.pressed);
     }
@@ -210,6 +231,7 @@ function readInput(slot) {
       if (Math.hypot(dx, dy) > 2) input.a = Math.atan2(dy, dx);
     }
     input.fire = pointer.fire;
+    input.focus = pointer.focus;
   }
   aim[slot] = input.a;
   if (benchSlot === slot) {
@@ -224,7 +246,7 @@ function cleanInput(raw) {
   const axisValue = n => Number.isFinite(n) ? clamp(n, -1, 1) : 0;
   return {
     x:axisValue(raw.x), y:axisValue(raw.y), a:Number.isFinite(raw.a) ? clamp(raw.a,-TAU,TAU) : 0,
-    fire:raw.fire === true, reload:raw.reload === true, use:raw.use === true,
+    fire:raw.fire === true, focus:raw.focus === true, reload:raw.reload === true, use:raw.use === true,
     upgrade:Number.isInteger(raw.upgrade) ? raw.upgrade : null
   };
 }
@@ -447,10 +469,11 @@ function makeMap(seed) {
   const rooms = [], corridors = [];
   const plan = [
     ['start',0], ['normal',1], ['boss',1], ['bench',0], ['normal',2],
-    ['boss',2], ['ammo',0], ['key',3], ['boss',3], ['bench',0], ['exit',0]
+    ['boss',2], ['ammo',0], ['foundry',3], ['bench',0], ['garden',3],
+    ['key',3], ['boss',3], ['bench',0], ['exit',0]
   ];
+  // Four rows keep both new areas reachable without overlapping rooms.
   const variation = Math.floor(random() * 3);
-  if (variation === 0) plan.splice(3,1);
   if (variation === 2) plan.splice(7,0,['normal',2]);
   const flipX = random() < .5, flipY = random() < .5;
   const fill = (x,y,w,h,index = -1) => {
@@ -466,7 +489,7 @@ function makeMap(seed) {
     let row = Math.floor(id / 4);
     let col = row % 2 ? 3 - id % 4 : id % 4;
     if (flipX) col = 3 - col;
-    if (flipY) row = 2 - row;
+    if (flipY) row = 3 - row;
     const cx = 11 + col * 20 + Math.floor(random() * 3) - 1;
     const cy = 9 + row * 16 + Math.floor(random() * 3) - 1;
     const w = type === 'boss' ? 15 : 11 + 2 * Math.floor(random() * 2);
@@ -475,7 +498,7 @@ function makeMap(seed) {
     const room = { id,type,tier,x,y,w,h,cx,cy,wx:(cx + .5) * T,wy:(cy + .5) * T };
     rooms.push(room);
     fill(x,y,w,h,id);
-    if (['normal','key','boss'].includes(type)) {
+    if (['normal','key','boss','foundry','garden'].includes(type)) {
       for (const sign of [-1,1]) {
         const px = cx + sign * (3 + Math.floor(random() * 2));
         const py = cy + (random() < .5 ? -1 : 1) * 3;
@@ -588,14 +611,14 @@ function createPlayer(slot, spawn) {
     id:slot,x:spawn.wx+(slot ? 26 : -26),y:spawn.wy,a:slot ? Math.PI : 0,r:15,hp:100,
     mag:slot ? 4 : 10,reserve:slot ? 12 : 0,cool:0,reload:0,reloadDuration:0,iframe:0,
     down:false,revive:0,mods:Array(10).fill(0),moving:false,useHeld:false,
-    foot:0,kills:0,shots:0,damage:0,saves:0
+    foot:0,kills:0,shots:0,damage:0,saves:0,focus:false,kick:0
   };
 }
 function createWorld(seed) {
   const first = map.rooms[0];
   return {
     tick:0,status:'play',players:[createPlayer(0,first),createPlayer(1,first)],
-    enemies:[],bullets:[],drops:[],key:false,cores:0,bosses:0,nextId:1,
+    enemies:[],bullets:[],drops:[],key:false,cores:4,bosses:0,nextId:1,cutscene:null,finalIntro:false,
     random:mulberry32(seed ^ 0xa1ec8701),
     rooms:map.rooms.map(room => ({
       seen:room.id === 0, started:room.id === 0, cleared:room.id === 0,
@@ -650,12 +673,18 @@ function spawnWave(room) {
     const {x,y} = spawnPoint(room,36);
     const boss = makeEnemy(room.tier,x,y,room.id,{ boss:true });
     boss.aware = 3;
+    if (room.tier === 3 && !world.finalIntro) {
+      world.finalIntro = true;
+      world.cutscene = { remaining:420, duration:420, x, y };
+      closeBench(); clearInput();
+      effect({ kind:'growl',x,y });
+    }
     effect({ kind:'alert', text:BOSSES[room.tier-1]+' despertou', x,y });
     return;
   }
   const tier = room.tier;
   const wave = record.wave;
-  const count = tier === 1 ? 4 + wave : tier === 2 ? 3 + wave : 5;
+  const count = room.type === 'garden' ? 5 + wave : room.type === 'foundry' ? 4 + wave : tier === 1 ? 4 + wave : tier === 2 ? 3 + wave : 5;
   for (let i = 0; i < count; i++) {
     const type = tier === 1 ? 1 : tier === 2 ? (i%2 ? 1 : 2) : i === 0 ? 3 : i%2 ? 2 : 1;
     const {x,y} = spawnPoint(room,ENEMY_TYPES[type].r);
@@ -671,6 +700,10 @@ function visitRooms() {
     const record = world.rooms[room.id];
     record.seen = true;
     if (record.started) continue;
+    if (room.type === 'boss' && room.tier === 3 && (world.bosses < 2 || !phaseCleared(world))) {
+      if (world.tick % 120 === 0) effect({kind:'alert',text:'Contenção lacrada · eliminem os dois chefes e concluam a Fundição e o Jardim',x:room.wx,y:room.wy});
+      continue;
+    }
     record.started = true;
     if (room.type === 'ammo') {
       drop('ammo',room.wx-27,room.wy,7);
@@ -685,9 +718,14 @@ function progressWaves() {
     const record = world.rooms[room.id];
     if (!record.started || record.cleared || !room.tier) continue;
     if (world.enemies.some(e => e.room === room.id)) continue;
-    const total = room.type === 'normal' ? 2 : 1;
+    const total = ['foundry','garden'].includes(room.type) ? 3 : room.type === 'normal' ? 2 : 1;
     if (record.wave >= total) {
       record.cleared = true;
+      if (room.type !== 'boss') {
+        drop('core',room.wx,room.wy,['foundry','garden'].includes(room.type) ? 10 : 5);
+        drop('health',room.wx+28,room.wy,30);
+        effect({kind:'alert',text:ROOM_NAMES[room.type]+' concluído · cargas liberadas',x:room.wx,y:room.wy});
+      }
       continue;
     }
     if (record.countdown < 0) record.countdown = 1.45;
@@ -704,7 +742,7 @@ function killEnemy(enemy,player) {
   }
   if (enemy.boss) {
     world.bosses++;
-    drop('core',x,y,2);
+    drop('core',x,y,8);
     drop('ammo',x-14,y+13,4);
     effect({ kind:'alert',text:BOSSES[enemy.type-1]+' caiu · Núcleo disponível',x,y });
   } else {
@@ -755,7 +793,9 @@ function updatePlayers(inputs) {
       continue;
     }
     p.a = input.a;
-    const scale = 171 * STEP / Math.max(1,Math.hypot(input.x,input.y));
+    p.focus = input.focus;
+    p.kick = Math.max(0,p.kick-STEP*8);
+    const scale = (p.focus ? 112 : 171) * STEP / Math.max(1,Math.hypot(input.x,input.y));
     const startX = p.x, startY = p.y;
     slide(p,input.x*scale,input.y*scale);
     p.moving = Math.hypot(p.x-startX,p.y-startY) > .25;
@@ -976,7 +1016,8 @@ const NO_MODS = Object.freeze(Array(10).fill(0));
 const slotsUsed = p => p.mods.reduce((sum,n) => sum+n,0);
 const capacity = p => ARMS[p.id].mag + p.mods[2]*(p.id ? 1 : 2);
 function applyUpgrade(p,index) {
-  if (!MODS[index] || !benchNear(p) || !world.cores || slotsUsed(p) >= 5) return;
+  if (!Number.isInteger(index) || !MODS[index] || !benchNear(p) || world.cores < 1 ||
+      p.mods[index] >= MAX_UPGRADE || (!p.mods[index] && usedSkills(p) >= MAX_SKILLS)) return;
   p.mods[index]++;
   world.cores--;
   if (index === 2 && p.id === 0) p.mag = Math.min(capacity(p),p.mag+2);
@@ -1009,10 +1050,11 @@ function updateWeapon(p,input) {
   const mods = fallback ? NO_MODS : p.mods;
   if (!fallback) p.mag--;
   p.shots++;
+  p.kick = 1;
   p.cool = weapon.delay/(1+.13*mods[1]);
   const count = 1+mods[6];
   for (let i = 0; i < count; i++) {
-    const a = p.a + (i-(count-1)/2)*.13;
+    const a = p.a + (i-(count-1)/2)*(p.focus ? .075 : .13);
     const d = count === 1 ? 1 : .73;
     const critical = world.random() < mods[7]*.09;
     world.bullets.push({
@@ -1090,7 +1132,8 @@ function showPanel(id) {
   $('hud').hidden = !(map && (world || view));
   document.body.classList.toggle('playing', !id && mode !== 'menu');
   document.body.classList.toggle('local',mode === 'local');
-  if (id && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if (id) document.body.classList.remove('cinematic');
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 }
 function goMenu(notice = '') {
   disconnect();
@@ -1156,12 +1199,19 @@ function updateBench(data) {
   const signature = [p.id,data.cores,...p.mods].join(',');
   if (signature === benchPaint) return;
   benchPaint = signature;
-  $('benchStatus').textContent = 'P'+(p.id+1)+' · '+data.cores+' cargas na equipe · '+used+'/5 slots';
+  $('benchStatus').textContent = 'P'+(p.id+1)+' · '+data.cores+' cargas compartilhadas · '+usedSkills(p)+'/5 habilidades · '+used+'/25 níveis';
   $('benchChoices').replaceChildren(...MODS.map(([label,detail],index) => {
     const button = document.createElement('button');
-    button.textContent = label+(p.mods[index] ? ' ×'+p.mods[index] : '');
-    button.title = detail;
-    button.disabled = !data.cores || used === 5;
+    const level = p.mods[index];
+    button.className = level ? 'skill installed' : 'skill';
+    const name = document.createElement('strong'); name.textContent = label+' · '+level+'/5';
+    const meter = document.createElement('span'); meter.className = 'skill-meter';
+    meter.setAttribute('aria-hidden','true');
+    for (let i=0;i<5;i++) { const pip=document.createElement('i'); pip.className=i<level ? 'filled' : ''; meter.append(pip); }
+    const description = document.createElement('small'); description.textContent = detail;
+    button.append(name,meter,description);
+    button.title = detail+' · custa 1 carga · nível máximo 5';
+    button.disabled = data.cores < 1 || level >= MAX_UPGRADE || (!level && usedSkills(p) >= MAX_SKILLS);
     button.addEventListener('click', () => { pendingUpgrade[p.id] = index; });
     return button;
   }));
@@ -1176,7 +1226,7 @@ function promptFor(p,data) {
     return partner.revive ? 'Reanimando · '+Math.floor(partner.revive/3*100)+'%' : 'Segure '+key+' por 3 s para reanimar';
   }
   if (benchNear(p)) return '['+key+'] Bancada · '+data.cores+' cargas';
-  if (roomAt(p.x,p.y)?.type === 'exit') return data.key ? 'Chave aceita · os dois na plataforma verde' : 'Saída lacrada · encontrem o portador';
+  if (roomAt(p.x,p.y)?.type === 'exit') return data.key && data.bosses >= 3 && phaseCleared(data) ? 'Chave aceita · os dois na plataforma verde' : 'Saída lacrada · chave, três chefes e os dois setores';
   return '';
 }
 const playerCards = [0,1].map(slot => {
@@ -1192,9 +1242,11 @@ const playerCards = [0,1].map(slot => {
   const fill = document.createElement('span');
   bar.append(fill);
   const weapon = document.createElement('small');
-  element.append(title,bar,weapon);
+  const loadout = document.createElement('div'); loadout.className = 'loadout';
+  loadout.setAttribute('aria-label','Cinco slots de habilidades');
+  element.append(title,bar,weapon,loadout);
   $('cards').append(element);
-  return { element,hp,fill,weapon };
+  return { element,hp,fill,weapon,loadout,signature:'' };
 });
 function updateHud(data,now) {
   $('hud').hidden = false;
@@ -1205,7 +1257,7 @@ function updateHud(data,now) {
   $('coreBadge').textContent = 'CARGAS '+data.cores+'  /  CHEFES '+data.bosses+'/3';
   const p = data.players[mode === 'local' ? 0 : mySlot];
   const room = roomAt(p.x,p.y);
-  const objective = data.key ? 'Chave obtida · cheguem juntos à saída' : 'Objetivo · encontrem o portador dourado';
+  const objective = data.bosses < 3 ? 'Limpem Fundição + Jardim e derrotem os 3 chefes' : data.key ? 'Chave obtida · cheguem juntos à saída' : 'Encontrem o portador dourado';
   const wave = room && data.rooms[room.id].wave;
   $('brief').textContent = (room ? String(room.id+1).padStart(2,'0')+' · '+ROOM_NAMES[room.type] : 'Corredor de serviço')+
     (wave && !data.rooms[room.id].cleared && room.type === 'normal' ? ' / ONDA '+wave : '')+'  //  '+objective;
@@ -1222,7 +1274,24 @@ function updateHud(data,now) {
     card.element.classList.toggle('down',player.down);
     card.hp.textContent = Math.ceil(player.hp)+' PV';
     card.fill.style.width = clamp(player.hp,0,100)+'%';
-    card.weapon.textContent = line+' · '+slotsUsed(player)+'/5';
+    card.weapon.textContent = line+' · '+usedSkills(player)+'/5 habilidades · '+slotsUsed(player)+'/25';
+    const signature=player.mods.join(',');
+    if(card.signature!==signature) {
+      card.signature=signature;
+      const installed=player.mods.map((level,index)=>({level,index})).filter(m=>m.level);
+      const short=['DANO','CAD.','PENTE','REC.','ALC.','PERF.','MULTI','CRIT.','AMMO','VIDA'];
+      card.loadout.replaceChildren(...Array.from({length:MAX_SKILLS},(_,i)=>{
+        const skill=installed[i], cell=document.createElement('div');
+        cell.className='loadout-slot'+(skill?'':' empty');
+        cell.textContent=skill?short[skill.index]:'—';
+        cell.title=skill?MODS[skill.index][0]+' · nível '+skill.level+'/5':'Slot disponível';
+        cell.setAttribute('aria-label',cell.title);
+        const meter=document.createElement('span');meter.className='skill-meter';
+        for(let n=0;n<MAX_UPGRADE;n++){const pip=document.createElement('i');pip.className=skill&&n<skill.level?'filled':'';meter.append(pip);}
+        cell.append(meter);return cell;
+      }));
+    }
+
   }
   drawRadar(data);
   updateBench(data);
@@ -1281,7 +1350,7 @@ function sprite(g,name,x,y,w,h) {
 function tileHash(x,y) {
   return (Math.imul(x+137,374761393) ^ Math.imul(y+191,668265263)) >>> 0;
 }
-const FLOOR_PALETTE = ['#293936','#2b3b37','#263632','#2d3e38','#2a3a35'];
+const FLOOR_PALETTE = ['#3b4643','#414d48','#35413e','#46504a','#3d4945'];
 function drawTiles(cam) {
   const minX = Math.max(0,Math.floor((cam.x-cam.w/2/cam.zoom)/T)-1);
   const maxX = Math.min(COLS-1,Math.ceil((cam.x+cam.w/2/cam.zoom)/T)+1);
@@ -1293,8 +1362,20 @@ function drawTiles(cam) {
       if (!wallAt(x,y)) {
         if (sprite(ctx,'floor',x0,y0,T,T)) continue;
         const room = map.rooms[map.zone[y*COLS+x]];
-        ctx.fillStyle = room ? FLOOR_PALETTE[v%5] : v%2 ? '#29312e' : '#303934';
+        ctx.fillStyle = room?.type === 'foundry' ? ['#504538','#594a38','#483f35'][v%3] :
+          room?.type === 'garden' ? ['#384837','#42533a','#3d4c32'][v%3] : room ? FLOOR_PALETTE[v%5] : v%2 ? '#333f3d' : '#3b4742';
         ctx.fillRect(x0,y0,T,T);
+        ctx.strokeStyle = '#111b1bd0'; ctx.lineWidth = 2; ctx.strokeRect(x0+1,y0+1,T-2,T-2);
+        ctx.fillStyle = '#96a18a33'; ctx.fillRect(x0+3,y0+3,T-6,2);
+        if (room?.type === 'foundry' && v%7 === 0) {
+          ctx.fillStyle='#211b16'; ctx.fillRect(x0+8,y0+8,28,28);
+          ctx.fillStyle='#f6b965'; for(let k=0;k<4;k++) ctx.fillRect(x0+10+k*6,y0+10,2,24);
+        }
+        if (room?.type === 'garden' && v%4 === 0) {
+          ellipse(ctx,x0+22,y0+24,15,10,'#192c24');
+          ellipse(ctx,x0+20,y0+21,12,8,'#708d46');
+          ellipse(ctx,x0+25,y0+18,5,4,'#c2cf73');
+        }
         ctx.fillStyle = '#0a131225';
         ctx.fillRect(x0+T-1,y0,1,T);
         ctx.fillRect(x0,y0+T-1,T,1);
@@ -1311,9 +1392,10 @@ function drawTiles(cam) {
       const edge = !wallAt(x+1,y) || !wallAt(x-1,y) || !wallAt(x,y+1) || !wallAt(x,y-1);
       if (!edge) continue;
       if (sprite(ctx,'wall',x0,y0,T,T)) continue;
-      ctx.fillStyle = v%2 ? '#202d2c' : '#1d2828';
+      ctx.fillStyle = v%2 ? '#333c38' : '#2b3431';
       ctx.fillRect(x0,y0,T,T);
-      ctx.fillStyle = '#435651';
+      ctx.strokeStyle='#111a18'; ctx.lineWidth=3; ctx.strokeRect(x0+1,y0+1,T-2,T-2);
+      ctx.fillStyle = '#7b8063';
       if (!wallAt(x,y+1)) ctx.fillRect(x0,y0+T-7,T,7);
       if (!wallAt(x,y-1)) ctx.fillRect(x0,y0,T,4);
       if (!wallAt(x+1,y)) ctx.fillRect(x0+T-4,y0,4,T);
@@ -1330,7 +1412,7 @@ function drawRoomProps(room,data) {
   ctx.textAlign = 'center';
   ctx.font = '700 14px monospace';
   ctx.fillStyle = ROOM_COLORS[type]+'aa';
-  const stamp = { start:'COMPLEXO 07  //  PONTO ZERO',normal:'SETOR',ammo:'DEPÓSITO',boss:'CONTENÇÃO',key:'ISOLAMENTO',bench:'REFÚGIO  //  BANCADA',exit:'PLATAFORMA DE EXTRAÇÃO' };
+  const stamp = { foundry:'FUNDIÇÃO DE ÂMBAR',garden:'JARDIM BIOLÓGICO',start:'COMPLEXO 07  //  PONTO ZERO',normal:'SETOR',ammo:'DEPÓSITO',boss:'CONTENÇÃO',key:'ISOLAMENTO',bench:'REFÚGIO  //  BANCADA',exit:'PLATAFORMA DE EXTRAÇÃO' };
   ctx.fillText(stamp[type]+'  '+String(room.id+1).padStart(2,'0'),0,-103);
   if (room.id < map.corridors.length) {
     const [from,to] = map.corridors[room.id];
@@ -1402,57 +1484,44 @@ function drawPlayer(p,now) {
     ctx.globalAlpha = .61;
   }
   ellipse(ctx,-2,5,19,14,'#050909a0');
-  ctx.rotate(p.a);
-  const key = p.id ? 'p2' : 'p1';
-  if (!sprite(ctx,key,-24,-24,48,48)) {
-    const stride = p.moving ? Math.sin(now/65)*4 : 0;
-    ctx.fillStyle = '#121d24';
-    ctx.fillRect(-17-stride,-10,12,7);
-    ctx.fillRect(-17+stride,4,12,7);
-    if (p.id === 0) {
-      ellipse(ctx,-3,0,13,14,'#143b54');
-      ellipse(ctx,-2,0,11,12,'#3a8fb3');
-      ctx.fillStyle = '#8ee7fa';
-      ctx.fillRect(-9,-9,4,18);
-      ellipse(ctx,3,0,9,8,'#e8b894');
-      shape(ctx,'#232a32',[[-9,-7],[-15,-10],[-12,-3],[-17,-1],[-12,3],[-15,9],[-4,8],[-2,-5]]);
-      ctx.fillStyle = '#14181d';
-      ctx.fillRect(5,-7,5,6);
-      ctx.fillRect(5,1,5,6);
-      ctx.fillRect(6,-1,1,3);
-      ctx.fillStyle = '#8dc1cb';
-      ctx.fillRect(8,-6,1,2);
-      ctx.fillRect(8,2,1,2);
-      ctx.fillStyle = '#151e25';
-      ctx.fillRect(7,8,16,5);
-      ctx.fillStyle = color;
-      ctx.fillRect(15,9,7,2);
-    } else {
-      ctx.fillStyle = '#672a34';
-      ctx.fillRect(-13,-13,25,26);
-      ctx.fillStyle = '#b44748';
-      ctx.fillRect(-10,-11,19,22);
-      ctx.fillStyle = '#e3af8e';
-      ctx.fillRect(-3,-6,13,12);
-      ctx.fillStyle = '#15181b';
-      ctx.fillRect(5,-6,4,12);
-      ctx.fillStyle = '#1b2426';
-      ctx.fillRect(-12,-16,34,10);
-      ctx.fillStyle = '#a7b5a4';
-      ctx.fillRect(-10,-14,27,5);
-      ctx.fillStyle = '#422d32';
-      ctx.fillRect(17,-16,7,10);
-      ctx.fillStyle = '#ff8778';
-      ctx.fillRect(22,-15,3,8);
-      ctx.fillStyle = '#24282a';
-      ctx.fillRect(4,8,17,5);
+  const stride = p.moving ? Math.sin(now/75+p.id)*3 : 0;
+  const bob = p.down ? 0 : p.moving ? Math.abs(stride)*.55 : Math.sin(now/350)*.65;
+  const recoil = p.kick || 0;
+  ctx.save();
+  if (p.down) ctx.rotate(-Math.PI/2);
+  ctx.translate(-Math.cos(p.a)*recoil*2,-bob);
+  ctx.rotate(p.moving ? stride*.012 : 0);
+  // Separate boots provide alternating steps under the static painted sprite.
+  ellipse(ctx,-9,16+stride,6,4,'#171d1b');
+  ellipse(ctx,9,16-stride,6,4,'#171d1b');
+  sprite(ctx,p.id ? 'p2' : 'p1',-29,-37,58,58);
+  ctx.restore();
+  if (!p.down) {
+    ctx.save();
+    ctx.translate(0,1);
+    ctx.rotate(p.a);
+    const fallback = p.id && !p.mag && !p.reserve;
+    if (Math.cos(p.a)<0) ctx.scale(1,-1);
+    ctx.translate(-recoil*6,p.focus ? -1 : Math.sin(now/230)*.8);
+    if(p.reload) ctx.rotate(Math.sin(p.reload/p.reloadDuration*Math.PI)*.6);
+    const heavy = p.id && !fallback;
+    ellipse(ctx,12,4,5,4,'#deb18b');
+    sprite(ctx,heavy ? 'cannon' : 'pistol',5,-7,heavy ? 43 : 28,heavy ? 13 : 20);
+    if(recoil>.4) {
+      ctx.globalAlpha=recoil;
+      shape(ctx,'#ffe1a0',[[heavy?48:34,0],[heavy?64:46,-6],[heavy?59:42,1],[heavy?64:46,6]]);
     }
+    if(p.focus) {
+      ctx.strokeStyle=color+'80'; ctx.lineWidth=1; ctx.setLineDash([3,5]);
+      ctx.beginPath(); ctx.moveTo(45,0); ctx.lineTo(120,0); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.restore();
   }
   ctx.restore();
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'center';
   ctx.fillStyle = color;
-  ctx.fillText('P'+(p.id+1),p.x,p.y-24);
+  ctx.fillText('P'+(p.id+1),p.x,p.y-44);
 }
 function drawEnemy(e,now) {
   ctx.save();
@@ -1470,10 +1539,13 @@ function drawEnemy(e,now) {
     ctx.arc(0,0,e.r+9,now/120,now/120+TAU*.82);
     ctx.stroke();
   }
-  ctx.rotate(e.a);
   const r = e.r, flex = e.active ? Math.sin(now/(e.type === 2 ? 65 : 120)+e.id) : 0;
   ellipse(ctx,-r*.16,r*.24,r*1.02,r*.74,'#040606a0');
-  if (!sprite(ctx,e.boss ? 'boss'+e.type : ENEMY_TYPES[e.type].sprite,-r*1.16,-r*1.16,r*2.32,r*2.32)) {
+  ctx.translate(0,-Math.abs(flex)*2);
+  ctx.rotate(flex*.035);
+  ellipse(ctx,-r*.4,r*.65+flex*2,r*.28,r*.16,'#141c17');
+  ellipse(ctx,r*.4,r*.65-flex*2,r*.28,r*.16,'#141c17');
+  if (!sprite(ctx,e.boss ? 'boss'+e.type : ENEMY_TYPES[e.type].sprite,-r*1.5,-r*1.8,r*3,r*3)) {
     if (e.type === 1) {
       ellipse(ctx,-r*.32,0,r*.78,r*.48,'#5c6663');
       ellipse(ctx,-r*.09,-r*.42,r*.8,r*.19,'#79847c');
@@ -1592,7 +1664,7 @@ function darken(cam,data,offsetX,offsetY) {
   for (const room of map.rooms) {
     if (!data.rooms[room.id].seen) continue;
     g.clearRect(room.x*T,room.y*T,room.w*T,room.h*T);
-    g.fillStyle = room.type === 'bench' ? '#06120a91' : '#030809bd';
+    g.fillStyle = room.type === 'bench' ? '#06120a71' : '#0308098a';
     g.fillRect(room.x*T,room.y*T,room.w*T,room.h*T);
   }
   g.globalCompositeOperation = 'destination-out';
@@ -1639,7 +1711,8 @@ function drawSparks(data,now) {
   }
   ctx.globalAlpha = 1;
 }
-function reticle(x,y,color) {
+function reticle(x,y,color,scale = 1) {
+  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale); x=y=0;
   ctx.strokeStyle = '#071011';
   ctx.lineWidth = 4;
   const path = () => {
@@ -1655,6 +1728,7 @@ function reticle(x,y,color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.4;
   path();
+  ctx.restore();
 }
 function drawView(cam,data,now) {
   const p = data.players[cam.slot];
@@ -1693,7 +1767,7 @@ function drawView(cam,data,now) {
     const heading = mouse ? aim[cam.slot] : (mode === 'online' && mySlot === 1 ? aim[1] : p.a);
     const crossX = mouse ? pointer.x : cam.left+cam.w/2+(p.x-cam.x+Math.cos(heading)*103)*cam.zoom;
     const crossY = mouse ? pointer.y : cam.h/2+(p.y-cam.y+Math.sin(heading)*103)*cam.zoom;
-    reticle(clamp(crossX,cam.left+15,cam.left+cam.w-15),clamp(crossY,15,cam.h-15),PLAYER_COLORS[p.id]);
+    reticle(clamp(crossX,cam.left+15,cam.left+cam.w-15),clamp(crossY,15,cam.h-15),PLAYER_COLORS[p.id],(p.focus ? .7 : 1)+(p.kick || 0)*.35);
   }
   const low = p.hp > 0 && p.hp < 27 ? .14+.09*Math.sin(now/155) : 0;
   if (red || low) {
@@ -1758,6 +1832,7 @@ function resize() {
 window.addEventListener('resize',resize);
 function render(data,now) {
   ctx.setTransform(density,0,0,density,0,0);
+  ctx.imageSmoothingEnabled = false;
   if (!map || !data) {
     drawIdle(now);
     return;
@@ -1776,12 +1851,46 @@ function render(data,now) {
     };
   });
   for (const cam of cameras) drawView(cam,data,now);
+  drawBossCutscene(data,now);
   if (mode === 'local') {
     ctx.fillStyle = '#0a1111';
     ctx.fillRect(split-2,0,4,height);
     ctx.fillStyle = '#577466';
     ctx.fillRect(split,0,1,height);
   }
+}
+
+// Final encounter: a seven-second reveal driven by authoritative simulation ticks.
+function drawBossCutscene(data,now) {
+  const scene=data.cutscene;
+  document.body.classList.toggle('cinematic',Boolean(scene));
+  if(!scene) return;
+  const t=1-scene.remaining/scene.duration;
+  ctx.save();
+  ctx.fillStyle='#070c0eee'; ctx.fillRect(0,0,width,height);
+  const cx=width/2, cy=height*.47;
+  const halo=ctx.createRadialGradient(cx,cy,20,cx,cy,Math.max(width,height)*.55);
+  halo.addColorStop(0,'#697343'); halo.addColorStop(.5,'#26362b'); halo.addColorStop(1,'#080e10');
+  ctx.fillStyle=halo; ctx.fillRect(0,0,width,height);
+  const size=Math.min(height*.62,width*.48)*(1+t*.22);
+  ctx.strokeStyle='#bac36d44'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.ellipse(cx,cy+size*.38,size*.65,size*.16,0,0,TAU); ctx.stroke();
+  ctx.globalAlpha=clamp(t*4,0,1);
+  sprite(ctx,'tank',cx-size/2,cy-size/2+Math.sin(now/400)*3,size,size);
+  ctx.globalAlpha=1;
+  // Containment shutters withdraw to reveal the boss.
+  const shutter=(1-clamp(t*2,0,1))*width/2;
+  ctx.fillStyle='#101b1c'; ctx.fillRect(0,0,shutter,height); ctx.fillRect(width-shutter,0,shutter,height);
+  ctx.fillStyle='#050809'; ctx.fillRect(0,0,width,height*.12); ctx.fillRect(0,height*.77,width,height*.23);
+  ctx.textAlign='center'; ctx.fillStyle='#d7be79'; ctx.font='bold '+Math.max(12,Math.min(18,width/50))+'px monospace';
+  ctx.fillText('COMPLEXO 07 / CONTENÇÃO FINAL',cx,height*.08);
+  ctx.fillStyle='#f0e7c6'; ctx.font='bold '+Math.max(22,Math.min(46,width/20))+'px monospace';
+  ctx.fillText(t<.32 ? 'O LACRE SE ROMPE' : 'O COLOSSO',cx,height*.84);
+  ctx.font=Math.max(11,Math.min(16,width/65))+'px monospace'; ctx.fillStyle='#bec9ad';
+  const line=t<.32 ? 'A Fundição silenciou. O Jardim deixou de respirar.' : t<.7 ? 'Vocês levaram a chave. Agora, levem as consequências.' : 'Operadores, juntos. Não deixem ninguém para trás.';
+  ctx.fillText(line,cx,height*.90,width*.9);
+  ctx.fillStyle='#8eab83'; ctx.fillRect(width*.25,height*.95,width*.5*t,3);
+  ctx.restore();
 }
 
 // audio
@@ -1856,7 +1965,7 @@ function playEvent(event) {
   } else if (event.kind === 'pickup') {
     tone('triangle',event.item === 'key' ? 425 : 310,510,.14,volume*.16);
     tone('sine',560,675,.16,volume*.12,.095);
-    const names = { key:'Chave recuperada · saiam juntos',core:'Núcleo coletado · +2 cargas',revive:'Operador reanimado' };
+    const names = { key:'Chave recuperada · saiam juntos',core:'Cargas coletadas · melhorem as habilidades na bancada',revive:'Operador reanimado' };
     if (names[event.item]) { toast = names[event.item]; toastUntil = now+3250; }
   } else if (event.kind === 'reload') {
     noise(.11,1520,volume*.12);
@@ -1878,10 +1987,10 @@ function updateHeartbeat(data,now) {
 // main
 function makeSnapshot() {
   return {
-    tick:world.tick,status:world.status,key:world.key,cores:world.cores,bosses:world.bosses,
+    tick:world.tick,status:world.status,key:world.key,cores:world.cores,bosses:world.bosses,cutscene:world.cutscene ? {...world.cutscene} : null,
     rooms:world.rooms.map(({ seen,wave,cleared }) => ({ seen,wave,cleared })),
-    players:world.players.map(({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r }) =>
-      ({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r })),
+    players:world.players.map(({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r,focus,kick }) =>
+      ({ id,x,y,a,hp,mag,reserve,down,revive,reload,reloadDuration,mods,moving,kills,saves,shots,r,focus,kick })),
     enemies:world.enemies.map(({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active }) =>
       ({ id,x,y,a,hp,maxHp,type,r,boss,carrier,tell,active })),
     bullets:world.bullets.map(({ id,x,y,a,style,critical }) => ({ id,x,y,a,style,critical })),
@@ -1946,8 +2055,15 @@ function simulate(now) {
   if (mode === 'local') pendingUpgrade[1] = null;
   else if (remoteInput) remoteInput.upgrade = null;
   world.tick++;
+  if (world.cutscene) {
+    world.cutscene.remaining--;
+    if (world.cutscene.remaining <= 0) { world.cutscene = null; clearInput(); }
+    if (mode === 'online' && world.tick % SNAP_INTERVAL === 0) publishSnapshot();
+    return;
+  }
   updatePlayers(inputs);
   visitRooms();
+  if (world.cutscene) { if(mode === 'online') publishSnapshot(); return; }
   updateEnemies();
   separate([...world.players,...world.enemies]);
   updateBullets();
@@ -1955,7 +2071,7 @@ function simulate(now) {
   progressWaves();
   const exit = map.rooms.at(-1);
   if (world.players.every(p => p.down)) finish('lost');
-  else if (world.key && world.players.every(p => !p.down &&
+  else if (world.key && world.bosses >= 3 && phaseCleared(world) && world.players.every(p => !p.down &&
       Math.abs(p.x-exit.wx) < 81 && Math.abs(p.y-exit.wy) < 63)) finish('win');
   else if (mode === 'online' && world.tick % SNAP_INTERVAL === 0) publishSnapshot();
 }
