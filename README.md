@@ -1,17 +1,49 @@
-# Last Key — Arte e movimento (1.1.1)
+# Last Key — versão atual 1.1.1
 
+**Esta é a versão mais nova**, com sprites, animações de movimento e ataque,
+cinco níveis por habilidade, Fundição de Âmbar, Jardim Biológico e cutscene do chefe final.
 Jogo de sobrevivência para dois jogadores, no mesmo computador ou online.
 
-## Executar
+## Baixar a versão mais nova
 
-Use Node.js 22 ou superior:
+**[Baixar o projeto atualizado completo (ZIP)](https://github.com/micaelmflima/Last_Key/archive/refs/heads/main.zip)**
+
+Ou use o botão verde **Code → Download ZIP** no GitHub, com a branch **main** selecionada.
+Extraia o ZIP inteiro antes de executar: o jogo precisa das imagens em `public/sprites/`.
+
+## Qual arquivo é o atual?
+
+| Arquivo ou pasta | O que contém |
+| --- | --- |
+| [`public/index.html`](public/index.html) | **Jogo atual 1.1.1**, com sprites e animações. |
+| [`public/sprites/`](public/sprites/) | Imagens e atlas de animação usados pelo jogo atual. |
+| [`server.js`](server.js) e [`package.json`](package.json) | Servidor e configuração para executar a versão atual. |
+| [`historico/`](historico/) | **Versão antiga 1.0.0**, guardada apenas como histórico. |
+
+A versão atual está nos arquivos da branch **main**. O ZIP que antes se chamava
+`last-key.zip` foi movido para `historico/Last_Key_1.0.0_ANTIGO.zip` para ficar
+claramente identificado como antigo. Esse ZIP não recebe as atualizações do jogo.
+
+
+## Executar a versão atual
+
+Para jogar online, use a URL HTTPS do serviço publicado no Render e compartilhe
+esse mesmo endereço com seu parceiro.
+
+Para executar no computador, abra um terminal na pasta extraída que contém
+`package.json`. Use Node.js 22 ou superior:
 
 ```sh
 npm ci
 npm start
 ```
 
-Abra `http://localhost:3000`. Para hospedar no Render, selecione este repositório,
+Abra `http://localhost:3000` no navegador. O comando mantém o servidor aberto;
+para jogar online, mantenha o terminal aberto também.
+
+Abrir o arquivo HTML isolado não inicia o servidor online.
+
+Para hospedar no Render, selecione este repositório,
 branch `main`, diretório raiz vazio, build `npm ci --omit=dev`, início `npm start`
 e health check `/`. O servidor aceita a variável `PORT` da hospedagem.
 Mantenha uma única instância: as salas estão na memória e reinícios encerram partidas.
@@ -78,8 +110,6 @@ em navegador, verificam 100 mapas, compras e limites, animações/tiro/mira,
 ondas e condições de vitória e duas sessões online, incluindo a cutscene.
 As capturas ficam em `test-results/` (ignoradas no Git).
 
-`last-key.zip` é o pacote original, preservado como recebido; para a versão
-atualizada, use os arquivos da raiz deste repositório.
 
 ## Desempenho e transições de sala
 
